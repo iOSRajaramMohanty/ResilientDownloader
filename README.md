@@ -1,5 +1,7 @@
 # ResilientDownloader
 
+**Version 1.0.0** | Swift 5.9+ | iOS 15+ / macOS 12+
+
 A Swift package for reliable, resumable file downloads optimized for poor internet connections and mobile networks.
 
 ## Features

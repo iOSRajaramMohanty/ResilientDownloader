@@ -138,7 +138,9 @@ public actor ChunkDownloader {
         
         var downloadedBytes: Int64 = 0
         var lastProgressUpdate: Int64 = 0
+        var lastProgressTime = Date()
         let progressInterval: Int64 = 64 * 1024 // Update every 64KB
+        let stallTimeout: TimeInterval = 30.0 // 30 seconds without progress = stall
         
         for try await byte in asyncBytes {
             data.append(byte)
@@ -147,6 +149,16 @@ public actor ChunkDownloader {
             if downloadedBytes - lastProgressUpdate >= progressInterval {
                 onProgress?(downloadedBytes)
                 lastProgressUpdate = downloadedBytes
+                lastProgressTime = Date()
+            }
+            
+            // Check for stall every 1MB
+            if downloadedBytes % (1024 * 1024) == 0 {
+                let timeSinceProgress = Date().timeIntervalSince(lastProgressTime)
+                if timeSinceProgress > stallTimeout {
+                    print("⚠️ [Chunk \(chunkIndex)] Stall detected - no progress for \(Int(timeSinceProgress))s")
+                    throw DownloadError.timeout
+                }
             }
         }
         
@@ -214,5 +226,16 @@ public actor ChunkDownloader {
     /// Invalidate the session
     public func invalidate() {
         session.invalidateAndCancel()
+    }
+    
+    /// Check if HTTP status code is retryable
+    private func isRetryableStatusCode(_ statusCode: Int) -> Bool {
+        // 408 Request Timeout
+        // 429 Too Many Requests
+        // 500 Internal Server Error
+        // 502 Bad Gateway
+        // 503 Service Unavailable
+        // 504 Gateway Timeout
+        return [408, 429, 500, 502, 503, 504].contains(statusCode)
     }
 }

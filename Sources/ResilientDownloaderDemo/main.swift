@@ -383,6 +383,7 @@ func downloadWithVisualProgress() async {
 print("""
 ╔═══════════════════════════════════════════════════════════════╗
 ║           🚀 ResilientDownloader Demo & Test                  ║
+║                    Version \(ResilientDownloaderVersion.version)                             ║
 ╚═══════════════════════════════════════════════════════════════╝
 """)
 
