@@ -38,15 +38,39 @@ public actor DownloadCoordinator {
     }
     
     /// Create chunk ranges for a file
+    /// Uses smart chunk sizing based on file size to avoid too many chunks
     private func createChunks(totalBytes: Int64, chunkSize: Int) -> [ChunkRange] {
+        // Calculate optimal chunk size based on file size
+        // Goal: 4-20 chunks for most files
+        let optimalChunkSize: Int64
+        let maxChunks = 20
+        
+        if totalBytes < 10 * 1024 * 1024 {
+            // < 10MB: use config chunk size (small files benefit from small chunks)
+            optimalChunkSize = Int64(chunkSize)
+        } else if totalBytes < 100 * 1024 * 1024 {
+            // 10-100MB: 2-5MB chunks
+            optimalChunkSize = max(Int64(chunkSize), 2 * 1024 * 1024)
+        } else if totalBytes < 500 * 1024 * 1024 {
+            // 100-500MB: aim for ~10 chunks
+            optimalChunkSize = max(totalBytes / 10, 10 * 1024 * 1024)
+        } else {
+            // > 500MB: aim for ~maxChunks chunks (20)
+            optimalChunkSize = max(totalBytes / Int64(maxChunks), 20 * 1024 * 1024)
+        }
+        
         var chunks: [ChunkRange] = []
         var start: Int64 = 0
         
         while start < totalBytes {
-            let end = min(start + Int64(chunkSize) - 1, totalBytes - 1)
+            let end = min(start + optimalChunkSize - 1, totalBytes - 1)
             chunks.append(ChunkRange(start: start, end: end))
             start = end + 1
         }
+        
+        // Log the chunk strategy
+        let chunkSizeMB = Double(optimalChunkSize) / 1_000_000
+        print("📊 [Chunks] \(chunks.count) chunks of ~\(String(format: "%.1f", chunkSizeMB))MB for \(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)) file")
         
         return chunks
     }
@@ -89,23 +113,31 @@ public actor DownloadCoordinator {
         }
         lastVisualUpdate[taskId] = now
         
-        // Clear previous lines and print new progress
-        print("\n📊 Chunk Progress:")
-        print("─────────────────────────────────────────────────────────")
+        // Calculate stats
+        let completedChunks = progress.values.filter { $0 >= 1.0 }.count
+        let overallProgress = progress.values.reduce(0.0, +) / Double(max(1, totalChunks))
         
-        for i in 0..<min(totalChunks, ranges.count) {
-            let chunkProg = progress[i] ?? 0.0
-            let range = ranges[i]
-            let rangeStr = formatRange(range).padding(toLength: 14, withPad: " ", startingAt: 0)
-            let bar = renderProgressBar(progress: chunkProg)
-            let percent = Int(chunkProg * 100)
-            let status = chunkProg >= 1.0 ? "✓" : " "
-            
-            print("  Chunk \(i + 1) [\(rangeStr)]: \(bar) \(String(format: "%3d", percent))% \(status)")
+        // Only show chunks that have started (progress > 0)
+        let activeChunks = progress.filter { $0.value > 0 && $0.value < 1.0 }
+            .sorted { $0.key < $1.key }
+        
+        // Skip display if nothing active
+        if activeChunks.isEmpty && completedChunks == 0 {
+            return
         }
         
-        // Calculate overall progress
-        let overallProgress = progress.values.reduce(0.0, +) / Double(max(1, totalChunks))
+        print("\n📊 Progress: \(completedChunks)/\(totalChunks) chunks complete")
+        print("─────────────────────────────────────────────────────────")
+        
+        // Show only active (in-progress) chunks
+        for (index, prog) in activeChunks {
+            let range = ranges[index]
+            let rangeStr = formatRange(range).padding(toLength: 14, withPad: " ", startingAt: 0)
+            let bar = renderProgressBar(progress: prog)
+            let percent = Int(prog * 100)
+            print("  Chunk \(index + 1) [\(rangeStr)]: \(bar) \(String(format: "%3d", percent))%")
+        }
+        
         let overallBar = renderProgressBar(progress: overallProgress, width: 40)
         print("─────────────────────────────────────────────────────────")
         print("  Overall: \(overallBar) \(Int(overallProgress * 100))%")
