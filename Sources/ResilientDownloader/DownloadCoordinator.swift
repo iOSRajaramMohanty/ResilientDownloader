@@ -24,6 +24,7 @@ public actor DownloadCoordinator {
     private var chunkProgress: [String: [Int: Double]] = [:]  // taskId -> [chunkIndex: progress]
     private var chunkRanges: [String: [ChunkRange]] = [:]
     private var lastVisualUpdate: [String: Date] = [:]
+    private var lastPrintedLines: [String: Int] = [:]  // Track lines printed for in-place update
     
     public init(
         stateStore: DownloadStateStore,
@@ -100,15 +101,15 @@ public actor DownloadCoordinator {
         }
     }
     
-    /// Display visual progress for all active chunks
+    /// Display visual progress for all active chunks (updates in place)
     private func displayChunkProgress(taskId: String, totalChunks: Int) {
         guard let progress = chunkProgress[taskId],
               let ranges = chunkRanges[taskId] else { return }
         
-        // Only update every 500ms to avoid console spam
+        // Only update every 300ms to balance responsiveness and performance
         let now = Date()
         if let lastUpdate = lastVisualUpdate[taskId],
-           now.timeIntervalSince(lastUpdate) < 0.5 {
+           now.timeIntervalSince(lastUpdate) < 0.3 {
             return
         }
         lastVisualUpdate[taskId] = now
@@ -121,13 +122,15 @@ public actor DownloadCoordinator {
         let activeChunks = progress.filter { $0.value > 0 && $0.value < 1.0 }
             .sorted { $0.key < $1.key }
         
-        // Skip display if nothing active
+        // Skip display if nothing active and nothing completed yet
         if activeChunks.isEmpty && completedChunks == 0 {
             return
         }
         
-        print("\n📊 Progress: \(completedChunks)/\(totalChunks) chunks complete")
-        print("─────────────────────────────────────────────────────────")
+        // Build output lines first to know the count
+        var lines: [String] = []
+        lines.append("📊 Progress: \(completedChunks)/\(totalChunks) chunks complete")
+        lines.append("─────────────────────────────────────────────────────────")
         
         // Show only active (in-progress) chunks
         for (index, prog) in activeChunks {
@@ -135,13 +138,47 @@ public actor DownloadCoordinator {
             let rangeStr = formatRange(range).padding(toLength: 14, withPad: " ", startingAt: 0)
             let bar = renderProgressBar(progress: prog)
             let percent = Int(prog * 100)
-            print("  Chunk \(index + 1) [\(rangeStr)]: \(bar) \(String(format: "%3d", percent))%")
+            lines.append("  Chunk \(index + 1) [\(rangeStr)]: \(bar) \(String(format: "%3d", percent))%")
+        }
+        
+        // If no active chunks but some completed, show waiting message
+        if activeChunks.isEmpty && completedChunks < totalChunks {
+            lines.append("  Starting next chunks...")
         }
         
         let overallBar = renderProgressBar(progress: overallProgress, width: 40)
-        print("─────────────────────────────────────────────────────────")
-        print("  Overall: \(overallBar) \(Int(overallProgress * 100))%")
-        print("")
+        lines.append("─────────────────────────────────────────────────────────")
+        lines.append("  Overall: \(overallBar) \(Int(overallProgress * 100))%")
+        
+        // ANSI escape codes for in-place update
+        let moveUp = "\u{1B}[A"      // Move cursor up one line
+        let clearLine = "\u{1B}[2K"  // Clear entire line
+        let moveToStart = "\r"       // Move to start of line
+        
+        let previousLines = lastPrintedLines[taskId] ?? 0
+        
+        // Move up and clear all previous lines
+        if previousLines > 0 {
+            for _ in 0..<previousLines {
+                print("\(moveUp)\(clearLine)", terminator: "")
+            }
+            print(moveToStart, terminator: "")
+        }
+        
+        // Print new content
+        for line in lines {
+            print(line)
+        }
+        
+        // If we had more lines before, add empty lines to clear old content
+        if previousLines > lines.count {
+            for _ in 0..<(previousLines - lines.count) {
+                print("")  // Empty line to push old content away
+            }
+        }
+        
+        // Track max lines we've used (to handle shrinking)
+        lastPrintedLines[taskId] = max(previousLines, lines.count)
     }
     
     /// Start or resume a download
@@ -310,6 +347,7 @@ public actor DownloadCoordinator {
             chunkProgress.removeValue(forKey: taskId)
             chunkRanges.removeValue(forKey: taskId)
             lastVisualUpdate.removeValue(forKey: taskId)
+            lastPrintedLines.removeValue(forKey: taskId)
         }
         
         try await withThrowingTaskGroup(of: ChunkResult.self) { group in
