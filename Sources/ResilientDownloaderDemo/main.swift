@@ -281,45 +281,61 @@ func testAllMLXFiles() async {
 func testVisualParallelDownload() async {
     print("""
       ┌────────────────────────────────────────────────────────────┐
-      │  Simulating Parallel Chunk Downloads (Visual Demo)         │
+      │  Simulating Parallel Chunk Downloads (Compact Demo)        │
       └────────────────────────────────────────────────────────────┘
     """)
     
     let chunks = 4
     let totalSteps = 20
     var chunkProgress = [Int](repeating: 0, count: chunks)
+    var completedChunks = 0
     
     print("")
     print("  Downloading 1GB file with \(chunks) parallel chunks:")
     print("")
     
-    for _ in 1...totalSteps {
+    for step in 1...totalSteps {
         for i in 0..<chunks {
             let speed = Double.random(in: 0.8...1.2)
             chunkProgress[i] = min(totalSteps, chunkProgress[i] + Int(speed * 1.2))
+            
+            // Check if chunk just completed
+            if chunkProgress[i] >= totalSteps && completedChunks < chunks {
+                let wasComplete = chunkProgress[i] - Int(speed * 1.2) >= totalSteps
+                if !wasComplete {
+                    completedChunks += 1
+                    print("  ✓ Chunk \(i + 1)/\(chunks) complete")
+                }
+            }
         }
         
-        for i in 0..<chunks {
-            let progress = min(chunkProgress[i], totalSteps)
-            let percent = (progress * 100) / totalSteps
-            let bar = renderProgressBar(progress: progress, total: totalSteps, width: 30)
-            let chunkRange = "\(i * 250)-\((i + 1) * 250)MB"
-            print("  Chunk \(i + 1) [\(chunkRange.padding(toLength: 12, withPad: " ", startingAt: 0))]: \(bar) \(percent)%")
+        // Only print progress every 4 steps (like real downloads)
+        if step % 4 == 0 || step == totalSteps {
+            let overallProgress = chunkProgress.reduce(0, +) / chunks
+            let overallPercent = (overallProgress * 100) / totalSteps
+            let bar = renderProgressBar(progress: overallProgress, total: totalSteps, width: 30)
+            
+            // Build compact chunk summary
+            var chunkSummary: [String] = []
+            for i in 0..<chunks {
+                let percent = (min(chunkProgress[i], totalSteps) * 100) / totalSteps
+                if percent < 100 {
+                    chunkSummary.append("C\(i + 1):\(percent)%")
+                }
+            }
+            
+            let chunksStr = chunkSummary.isEmpty ? "All done!" : chunkSummary.joined(separator: " ")
+            print("  📊 [\(completedChunks)/\(chunks)] \(bar) \(overallPercent)% | \(chunksStr)")
         }
-        
-        let overallProgress = chunkProgress.reduce(0, +) / chunks
-        let overallPercent = (overallProgress * 100) / totalSteps
-        print("  ─────────────────────────────────────────────────────────")
-        print("  Overall: \(renderProgressBar(progress: overallProgress, total: totalSteps, width: 40)) \(overallPercent)%")
-        print("")
         
         try? await Task.sleep(nanoseconds: 200_000_000)
     }
     
+    print("")
     print("  ✅ All chunks completed!")
     print("")
     
-    print("  Now downloading real file with visual progress...")
+    print("  Now downloading real file...")
     print("")
     
     await downloadWithVisualProgress()
